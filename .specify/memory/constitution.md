@@ -1,50 +1,127 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+================================================================================
+SYNC IMPACT REPORT
+================================================================================
+Version change: N/A → 1.0.0 (Initial ratification)
+Modified principles: N/A (new constitution)
+Added sections:
+  - Core Principles (5 principles)
+  - Development Workflow
+  - Hackathon Constraints
+  - Governance
+Removed sections: N/A
+Templates requiring updates:
+  - .specify/templates/plan-template.md: ✅ No updates needed (Constitution Check section compatible)
+  - .specify/templates/spec-template.md: ✅ No updates needed (requirements format compatible)
+  - .specify/templates/tasks-template.md: ✅ No updates needed (phase structure compatible)
+Follow-up TODOs: None
+================================================================================
+-->
+
+# Wizard Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Working Code First
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+All features MUST be demonstrable within the hackathon timeframe. Every implementation decision prioritizes:
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+- Functional prototypes over comprehensive documentation
+- Hardcoded values over configurable abstractions (until proven needed)
+- Single-file implementations before modular refactoring
+- Console output before UI polish
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+**Rationale**: Wizard is a hackathon project. Judges evaluate working demos, not elegant architecture. Ship something that runs.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### II. Symbolic Simplicity
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+The cyber micro-world MUST remain symbolic and deterministic:
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+- No real OS calls, network requests, or file system access in the sandbox
+- State changes MUST be predictable and traceable
+- New actions MUST define explicit flag mutations upfront
+- Environment state MUST serialize to human-readable text for LM training
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+**Rationale**: Complexity in the sandbox undermines the core research goal. The model learns patterns, not real system behavior.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### III. YAGNI (You Ain't Gonna Need It)
+
+Code MUST solve only the current, concrete requirement:
+
+- No generic abstractions until 3+ concrete use cases exist
+- No feature flags, configuration systems, or plugin architectures
+- No backward compatibility layers—change code directly
+- No "future-proofing" comments or TODO placeholders for hypothetical needs
+
+**Rationale**: Premature abstraction is the root of hackathon failure. Three similar lines beat one clever abstraction.
+
+### IV. ML Pipeline Clarity
+
+The trajectory-to-model pipeline MUST be traceable:
+
+- Raw trajectories → JSONL with documented schema
+- JSONL → text corpus via explicit flattening rules
+- Text corpus → model training with logged hyperparameters
+- Model outputs → parsed predictions with clear format expectations
+
+**Rationale**: When the model misbehaves, debugging requires knowing exactly what went in and what should come out.
+
+### V. UV as Package Manager
+
+All Python dependencies MUST be managed via UV:
+
+- Use `uv pip install` for package installation
+- Use `uv run` for script execution
+- Maintain `pyproject.toml` as the single source of dependencies
+- No manual pip or conda commands
+
+**Rationale**: Consistent tooling eliminates "works on my machine" issues during hackathon crunch time.
+
+## Development Workflow
+
+### Iteration Cycle
+
+1. **Define** the next demonstrable feature (what will judges see?)
+2. **Implement** the minimal working version
+3. **Validate** with a manual test (run it, see output)
+4. **Commit** with a clear message describing what now works
+5. **Repeat** until demo-ready
+
+### Code Organization
+
+- `sandbox/` — Symbolic environment and action definitions
+- `dataset/` — Trajectory generation and data processing
+- `model/` — Training scripts and checkpoints
+- `engine/` — Runtime prediction and intervention logic
+- `demo/` — Demo scripts and UI (if applicable)
+
+## Hackathon Constraints
+
+These constraints reflect the hackathon context and MUST be respected:
+
+| Constraint | Limit | Enforcement |
+|------------|-------|-------------|
+| Model size | 10-20M parameters | Config in training script |
+| Training time | <1 hour on single GPU/CPU | Monitor and abort if exceeded |
+| Inference latency | Sub-second per prediction | Profile before demo |
+| Dataset size | 2-5k episodes | Generator output cap |
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+### Amendment Process
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+1. Propose change with rationale in PR description
+2. Update constitution version according to semantic versioning:
+   - **MAJOR**: Principle removal or fundamental redefinition
+   - **MINOR**: New principle or significant guidance expansion
+   - **PATCH**: Clarifications, wording improvements
+3. Update `LAST_AMENDED_DATE` to change date
+
+### Compliance
+
+- All PRs MUST not violate YAGNI (Principle III)
+- Sandbox changes MUST maintain symbolic simplicity (Principle II)
+- Pipeline changes MUST preserve traceability (Principle IV)
+- Complexity MUST be justified if it exceeds hackathon constraints
+
+**Version**: 1.0.0 | **Ratified**: 2025-11-23 | **Last Amended**: 2025-11-23

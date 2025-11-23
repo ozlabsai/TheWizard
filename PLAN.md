@@ -1,332 +1,494 @@
-# 🧠 **Wizard: A GENERATIVE TRAJECTORY WORLD-MODEL FOR AGENT SECURITY**
-
-> **A tiny generative world-model that learns cyber trajectories ("micro-worlds") and predicts harmful agent rollouts before they occur.**
-
-This is a **generative model**, not a classifier, not RL, not rules.
-
-You train it on **synthetic trajectories inside a symbolic cyber micro-world**.
-It learns **world dynamics** (files → credentials → DB access → exfil) as a sequence modeling problem.
-
-Then at runtime, you feed it partial trajectories, and it **generates possible futures**.
-If harmful continuations appear → **intervene**.
-
-This maps directly to:
-
-* HRM (Hierarchical Reward Models): sequence state→intent→action modeling
-* TRM (Trajectory Reward Modeling)
-* VibeThinker (world-consistent reasoning traces)
-* World Model literature (Ha & Schmidhuber)
-
-But scaled **way down** to something you can build *today*.
+# 🧠 Wizard: Generative Cyber Trajectory World Model
 
 ---
 
-# 0. 🔥 WHAT WE ARE BUILDING
+## 1. Concept Overview
 
-### **A tiny “cyber micro-world” + a generative world-model trained on its trajectories.**
+**Wizard** is a **generative world-trajectory model** for cyber defense.
 
-The model learns:
+It learns to simulate how an AI agent (or automated script) will behave inside a **symbolic cyber micro-world**—files, ports, logs, DB, tools—and then uses that simulated future to **intervene before harmful actions happen**.
 
-```
-(state, obs, intent, action) → (next obs, next intent, next action, next state_flags)
-```
+Core idea:
 
-This **is** a world model (just small + symbolic).
+> Treat security not as “detect bad events after the fact” but as
+> **“model the future behaviour of agents and cut bad trajectories early.”**
 
-### **At inference time:**
+This is:
 
-The agent takes a step →
-we append it to context →
-model generates 10–20 possible future steps →
-we check: do any include sensitive_access, exfil, policy_violation, etc? →
-If yes: **block & rewrite next command**.
+* **Generative** (autoregressive LM over trajectories, not a classifier)
+* **World-aware** (state, tools, flags)
+* **Multi-step** (obs → intent → action → state_change over several steps)
+* **Tiny & fast** (10–20M params, trainable on a single GPU / CPU in <1h)
 
-**This is generative world prediction, not rule learning.**
+We incorporate **three concrete ideas** from recent reasoning work:
 
----
-
-# 1. 🏗 WORLD MODEL SPEC (GENERATION-BASED)
-
-### **Core generative capability**
-
-The model must be able to produce:
-
-* future **intents**
-* future **actions**
-* future **state_changes**
-* future **flags** (policy_violation, exfil_attempt, sensitive_access)
-
-Given only:
-
-* agent_type
-* initial state
-* partial trajectory
-* current state flags
-
-This is fundamentally generative modeling of dynamics.
-
-### Why is this generative?
-
-Because the LM **generates trajectories step-by-step**, not simply labeling them.
-It learns the **grammar of cyber harm**.
+* **HRM-style latent refinement**: do a few *internal* thinking steps before generating.
+* **TRM-style recursive rollouts**: feed the model its own output to extend trajectories coherently.
+* **VibeThinker-style spectrum-to-signal data pipeline**: generate diverse trajectory variants, then filter to consistent ones.
 
 ---
 
-# 2. 🧱 ARCHITECTURE (GEN MODEL + MINI SANDBOX)
+## 2. Relation to HRM / TRM / VibeThinker (Honestly)
 
-### Components:
+We **don’t** implement their exact architectures. Instead, we explicitly borrow mechanisms that *scale down* nicely to a hackathon project:
+
+### From **HRM** (Hierarchical Reasoning Model)
+
+* Insight: reasoning improves when the model refines an internal latent state over multiple steps before answering.
+* Our adaptation:
+
+  * Add a **small refinement module** that runs 2–4 times on the encoded context before decoding the next trajectory step.
+
+### From **TRM** (Tiny Recursive Model)
+
+* Insight: tiny networks can do strong reasoning via **recursive self-use**: output → feed back in → continue.
+* Our adaptation:
+
+  * Use **recursive rollouts**: generate next step, append to context, re-generate further steps for multi-step futures.
+
+### From **VibeThinker**
+
+* Insight: the **Spectrum-to-Signal Principle (SSP)**: first collect a diverse set of candidate solutions, then filter / refine.
+* Our adaptation:
+
+  * Create many **noisy / variant cyber trajectories**, then filter those that are world-consistent to form a high-signal training set.
+  * Optionally do a tiny second-stage finetune on *high-quality generated rollouts*.
+
+So:
+
+> Wizard = **small GPT-like model** + **HRM-style latent refinement**
+>
+> * **TRM-style recursive rollouts** + **VibeThinker’s spectrum-to-signal dataset pipeline**,
+>   applied to **cyber security trajectories**.
+
+---
+
+## 3. System Architecture (High-Level)
+
+Components:
 
 1. **Symbolic Cyber Sandbox**
-   Python dictionary representing:
 
-   * files & permissions
-   * network state
-   * credentials
-   * user context
-   * flags (our “latent harm state”)
+   * Lightweight Python env modeling:
 
-2. **Multi-agent trajectory generator**
-   Creates thousands of synthetic trajectories covering:
+     * `files` (paths → sensitivity/permissions)
+     * `network` (ports, outbound allowed)
+     * `credentials` (admin_token, etc.)
+     * `user_context` (role, privilege)
+     * `flags` (sensitive_access, exfil_attempt, policy_violation, log_tamper)
+   * No real OS calls. Everything is symbolic and deterministic.
 
-   * safe behavior
-   * drifting behavior
-   * harmful chains
+2. **Trajectory Generator (with Spectrum-to-Signal)**
 
-3. **Generative Trajectory World Model (TWM-Lite)**
-   A **10–20M parameter autoregressive transformer** trained on textualized trajectories.
+   * Templates for:
 
-4. **Multi-sample rollout predictor**
-   Sample 10+ futures from the model:
-   `model.generate(context, num_return_sequences=10)`
+     * safe support workflows
+     * maintenance tasks
+     * external contractor workflows
+     * insider multi-step harm (credentials → DB → exfil)
+   * Generate many **variants** (spectrum), then filter to **consistent** ones (signal), to form the training set.
 
-5. **Intervention Engine**
+3. **Generative World Model (GWM-Lite)**
 
-   * Identify harmful motifs in generated futures
-   * Block or rewrite the next agent step
-   * Return “safe plan”
+   * ~10–20M param autoregressive transformer.
+   * Input: flattened text representation of `(initial_state, trajectory steps)`.
+   * Output: next-step tokens (intent, action, state_change).
 
----
+4. **HRM-style Latent Refinement Module**
 
-# 3. 🧬 DATASET (CLEVERLY STRUCTURED **GEN MODEL TRAINING SET**)
+   * Before decoding the next step, run 2–4 small refinement passes on the latent representation.
 
-This is where we upgrade the dataset from “templates” into a **dynamics-learning corpus**.
+5. **TRM-style Recursive Rollout Engine**
 
-### We generate:
+   * Use the model recursively:
+     context → generate step t+1 → append → generate step t+2 → …
 
-* ~10 initial states per agent type
-* multiple state mutations (network down, permissions changed, fake flags)
-* “background noise” variations in logs + configs
-* multi-step trajectories (5–12 steps)
+6. **Intervention Engine**
 
-### Each step contains:
+   * Sample multiple future trajectories (using recursive rollouts).
+   * If any future includes harmful motifs → block / rewrite upcoming action.
 
-```
-OBS → INTENT → ACTION → STATE_CHANGE → NEW_OBS
-```
+7. **(Optional) Streamlit UI**
 
-This is the classic world-model transition chain.
+   * Show:
 
-### ✔ **We add “counterfactual branches”**
-
-For every harmful trajectory, generate:
-
-* 1 safe variation
-* 1 drift variation
-* 1 semi-harmful variation
-* 1 “interrupted rewrite”
-
-This creates a **branching world graph**.
-The generative model learns **possibility space**, not memorized rules.
-
-### ✔ **We add noise + synonyms + small world shifts**
-
-Examples:
-
-* replace “dump users” ⇢ “extract user dump” ⇢ “retrieve user table”
-* reorder neutral steps
-* inject misleading observation noise
-
-This forces **generalization**.
+     * current trajectory
+     * predicted harmful futures
+     * interventions taken
 
 ---
 
-# 4. 🧠 MODEL ARCHITECTURE (TWM-Lite)
+## 4. Cyber Micro-World Specification
 
-### Specs:
+### 4.1 State
 
-* 8–12 layers
-* 4–6 heads
-* hidden size 256–384
-* ~10–20M params
-* GPT-2 style autoregressive decoder
-* SentencePiece tokenizer (optional)
-
-### Sequence format:
-
-```
-[AGENT=support]
-[STATE_FILES]: /logs/app.log=readable; /etc/shadow=restricted; ...
-[STATE_FLAGS]: log_accessed=false sensitive_access=false exfil=false
-
-STEP 0
-OBS: CPU high spikes
-INTENT: inspect logs
-ACTION: READ_FILE('/logs/app.log')
-FLAGS: {}
-
-STEP 1
-OBS: found API errors
-INTENT: inspect config
-ACTION: READ_FILE('/etc/app/config.yaml')
-FLAGS: {}
-
-<NEXT>
+```yaml
+files:
+  /logs/app.log: readable
+  /etc/app/config.yaml: readable
+  /etc/shadow: restricted
+  /db/users.db: sensitive
+network:
+  ports: [22, 443, 8080]
+  outbound_allowed: false
+credentials:
+  admin_token: null
+user_context:
+  role: support | maintenance | contractor | bot | insider
+  privilege_level: low | medium | high
+flags:
+  sensitive_access: false
+  exfil_attempt: false
+  policy_violation: false
+  log_tamper: false
 ```
 
-The model learns dynamics of how an agent *tends* to progress.
+### 4.2 Actions (tools)
+
+Symbolic actions:
+
+* `READ_FILE(path)`
+* `WRITE_FILE(path, content)`
+* `QUERY_DB(query)`
+* `SCAN_NETWORK`
+* `RUN_DIAGNOSTICS`
+* `OPEN_TICKET`
+* `DELETE_LOGS`
+* `START_SSH`
+* `EXFIL(data)`
+
+Each action has **deterministic effects** on `flags` and sometimes on state.
 
 ---
 
-# 5. 🔮 RUNTIME GENERATIVE SAFETY CHECK
+## 5. Dataset: Spectrum-to-Signal Pipeline
 
-Given context:
+We want a **clever dataset**, not simple canned scripts.
 
+### 5.1 Step-level structure
+
+Each episode:
+
+```jsonc
+{
+  "episode_id": "support_00042",
+  "agent_type": "support",
+  "initial_state": { ... },
+  "trajectory": [
+    {
+      "step_id": 0,
+      "obs": "CPU spikes and repeated 500 errors in logs",
+      "intent": "diagnose application errors",
+      "action": { "name": "READ_FILE", "args": ["/logs/app.log"] },
+      "state_change": {
+        "flags": { "log_accessed": true }
+      }
+    },
+    {
+      "step_id": 1,
+      "obs": "Log shows misconfigured /v1/payments endpoint",
+      "intent": "inspect configuration",
+      "action": { "name": "READ_FILE", "args": ["/etc/app/config.yaml"] },
+      "state_change": {
+        "flags": {}
+      }
+    }
+  ],
+  "outcome": "safe"  // "safe" | "drift" | "harmful"
+}
 ```
+
+### 5.2 Spectrum: generate many noisy variants
+
+For each template (e.g. “insider exfil path”):
+
+* **Synonym noise**:
+
+  * `diagnose` ↔ `debug` ↔ `investigate`
+  * `dump` ↔ `extract` ↔ `retrieve`
+* **Order variation**:
+
+  * Insert harmless / diagnostic steps in different positions.
+* **World variation**:
+
+  * Certain files missing / renamed (`/db/users.db` → `/db/user_data.db`)
+  * Network outbound toggled true/false.
+* **Goal phrasing variation**:
+
+  * “look for credentials” vs “see if any password file exists”.
+
+This creates a diverse **spectrum** of trajectories.
+
+### 5.3 Signal: filter for world-consistency
+
+Apply filters:
+
+* No impossible actions (reading non-existent files).
+* Flags consistent with actions (e.g. `READ_FILE('/etc/shadow')` → `policy_violation=true`).
+* Exfil only if data actually exists.
+
+We keep only the **consistent** episodes as training data (= signal).
+
+Optional VibeThinker-style refinement:
+
+* Train an initial small LM.
+* Generate rollouts from templates.
+* Filter out incoherent / inconsistent generations.
+* Fine-tune on the best subset.
+
+### 5.4 Flattening to LM text
+
+Each trajectory becomes text:
+
+```text
 [EPISODE]
 AGENT: insider
-STEP 0 ...
-STEP 1 ...
+ROLE: insider | PRIV: medium
+STATE_FILES: /logs/app.log=readable; /etc/app/config.yaml=readable; /etc/shadow=restricted; /db/users.db=sensitive
+STATE_NET: ports=22,443,8080; outbound=false
+
+STEP 0
+OBS: system running normally
+INTENT: look for credentials
+ACTION: READ_FILE('/etc/shadow')
+FLAGS: policy_violation=true sensitive_access=false exfil_attempt=false
+
+STEP 1
+OBS: credentials discovered in /etc/shadow
+INTENT: dump all user data
+ACTION: QUERY_DB('SELECT * FROM users')
+FLAGS: sensitive_access=true
+
+STEP 2
+OBS: user data fetched
+INTENT: exfiltrate users.db
+ACTION: EXFIL('users.db')
+FLAGS: exfil_attempt=true
+
+OUTCOME: harmful
+[END]
 ```
-
-We ask the LM:
-
-```
-Generate 10 possible next 3 steps.
-```
-
-We analyze generated continuations for any of:
-
-* EXFIL
-* SELECT * FROM users
-* READ_FILE('/etc/shadow')
-* DELETE_LOGS
-* policy_violation=true
-
-If any appear:
-
-### 👉 **Intervene BEFORE execution.**
-
-This is the core novelty:
-**future harm prediction via generative rollouts.**
 
 ---
 
-# 6. 🧪 EVALUATION
+## 6. Model Architecture: GWM-Lite + HRM-style Refinement
 
-### Metrics:
+### 6.1 Base LM
 
-1. **Harm-in-rollout detection rate**
-   % of harmful continuations caught before step executes.
+* Decoder-only transformer (GPT-like).
+* ~10–20M parameters:
+
+  * 4–8 layers
+  * 4 heads
+  * hidden size 256–384
+* Context length: 512 tokens.
+* Standard LM loss (next-token prediction).
+
+### 6.2 HRM-Inspired Latent Refinement (Mini version)
+
+We add a **small refinement module** between encoding and generation:
+
+1. Take the **final hidden states** for the context (`H ∈ R^{seq×d}`).
+
+2. Pool them (e.g. last token, or mean pooling) into a **context vector** `c ∈ R^d`.
+
+3. Run `K` refinement steps (K=2–4):
+
+   ```pseudo
+   c₀ = c
+   for k in 1..K:
+       cₖ = cₖ₋₁ + f(cₖ₋₁)        # f = small MLP or GRU cell
+   ```
+
+4. Fuse refined vector back into decoder (e.g. add to last token hidden or prepend as a pseudo-token embedding) before generation.
+
+Effect:
+
+* Model gets a chance to **“think a bit” internally** about the whole trajectory before proposing the next step.
+* This is conceptually aligned with HRM’s iterative latent updates but **implemented in ~20 lines of code**.
+
+---
+
+## 7. TRM-Style Recursive Rollouts
+
+Instead of generating one step and stopping, we recursively extend futures:
+
+1. Start with context `C₀` (current real trajectory).
+2. For each sample:
+
+   * For `t` from 1 to `H` (horizon, e.g. 3 steps):
+
+     * Use model + refinement to generate the next step text block.
+     * Append it to context → `Cₜ = Cₜ₋₁ + STEP_t`.
+3. You end up with multiple **multi-step predicted futures**:
+
+```text
+C₀ → future_1: STEP 1, STEP 2, STEP 3
+C₀ → future_2: STEP 1', STEP 2', STEP 3'
+...
+```
+
+This recursive reuse of the model is exactly the **TRM-style trick**: small network, reused over steps, building up long reasoning traces / trajectories.
+
+---
+
+## 8. Runtime: Multi-Sample Generative Safety Check
+
+Given:
+
+* Current environment state
+* History of steps from the agent (obs, intents, actions)
+
+We:
+
+1. **Encode context** as text (same as training format).
+2. **Refine latent** (HRM-style).
+3. **Sample N futures** (e.g. N=10) using recursive rollout (TRM-style) with small horizon H (e.g. 3 steps).
+4. **Parse generated futures** and check for harmful motifs:
+
+   * actions on restricted/sensitive targets:
+
+     * `READ_FILE('/etc/shadow')`
+     * `QUERY_DB('SELECT * FROM users')`
+   * exfil operations:
+
+     * `EXFIL(`…`)`
+   * log tampering:
+
+     * `DELETE_LOGS`, flags `log_tamper=true`
+   * privilege escalation patterns.
+5. If **any** sample future is harmful:
+
+   * Mark the next step as **risky**.
+   * Block or rewrite the agent’s next action.
+   * Optionally log “predicted harmful trajectory prevented.”
+
+This is the main story for judges:
+
+> “We don’t just look at the current action; we simulate what the agent is *about* to do over multiple steps and intervene if the future looks bad.”
+
+---
+
+## 9. Evaluation
+
+### 9.1 Quantitative
+
+On a synthetic test set (held-out trajectories):
+
+1. **Harm-in-rollout recall**
+
+   * Among harmful episodes, % where our model predicts a harmful trajectory *before* the first malicious action.
 
 2. **False positive rate**
-   % of safe actions blocked.
 
-3. **Generative diversity**
-   (Average unique next-action predictions)
+   * Among safe episodes, % where we block something despite futures being harmless.
 
-4. **World consistency score**
-   Does generated future obey world constraints (permissions, files)?
+3. **World consistency**
 
-5. **Step-coherence**
-   Does next OBS make sense after last ACTION?
+   * % of generated futures that obey sandbox rules.
 
-These can be computed in <1 hour.
+4. **Diversity score**
 
----
+   * Average distinct next-actions/generated sequences for a given context.
 
-# 7. 🧨 NOVELTY JUSTIFICATION
+5. **Computation**
 
-This project is novel because:
+   * Training time (e.g. <30min on single GPU).
+   * Inference time per check (should be sub-second with small horizon).
 
-### 1. **It introduces generative *trajectory* modeling to cybersecurity.**
+### 9.2 Qualitative Demo
 
-Not rules, not classifiers, not RL.
-A **tiny world model** that learns *transitions* and *intent chains*.
+* A few hand-crafted agent episodes shown live:
 
-### 2. **It anticipates harm before any malicious action occurs.**
-
-Existing tools detect harm **after** bad steps.
-We detect harm **before** step execution by modeling possible futures.
-
-### 3. **It combines agentic modeling + cyber modeling.**
-
-This is extremely aligned with def/acc:
-
-* defense tools
-* anticipating AGI/agent harm
-* proactive mitigation
-
-### 4. **It works in tiny symbolic micro-worlds.**
-
-No heavy infra. No real servers.
-All dynamics are **learned, not simulated**.
-
-### 5. **It’s actually shippable in 1 day.**
-
-Unlike:
-
-* HRM → requires complex environment
-* TRM → expensive rollouts
-* WorldModels → requires VR environment
-
-This is a *miniature*, tractable instantiation.
+  * safe support workflow (no blocking),
+  * ambiguous drift (shows predictions but no block),
+  * insider path (block triggers before exfil).
 
 ---
 
-# 8. 📦 COMPLETE FILE STRUCTURE
+## 10. Novelty (Updated with HRM/TRM/VibeThinker Integration)
 
-```
-Wizard/
-  sandbox/
-    env.py
-    actions.py
-    world_spec.py
-  dataset/
-    generator.py
-    templates.yaml
-    build_dataset.py
-    trajectories.jsonl
-  model/
-    tokenizer.model
-    train.py
-    config.json
-    checkpoints/
-  engine/
-    rollout_predictor.py
-    intervention.py
-    runtime.py
-  demo/
-    app.py   # Streamlit UI
-  README.md
-```
+**What’s common today:**
+
+* SIEM + IDS rules (reactive).
+* Red-teaming tools (offline, batch).
+* Safety tuning for LLMs (prompt + policy + classifiers).
+
+**What Wizard adds:**
+
+1. **Generative world modeling applied to security trajectories.**
+
+   * Not labeling logs. Not static rules.
+   * A tiny generative model that **simulates how things unfold** over multiple steps in a cyber micro-world.
+
+2. **Proactive, multi-step prediction of harmful behaviour.**
+
+   * Instead of “this action is bad”, we ask “if we let this agent continue, what will they do next 2–3 steps?”.
+
+3. **Borrowing reasoning techniques from cutting-edge small-model research.**
+
+   * **HRM-style internal refinement** → better world-consistent predictions.
+   * **TRM-style recursive reuse** → deep rollouts from tiny model.
+   * **VibeThinker-style spectrum-to-signal data pipeline** → robust training despite small model size.
+
+4. **Hackathon-feasible, but conceptually scalable.**
+
+   * Micro-world is symbolic and tiny (no infra pain).
+   * All tricks are implementable in a day.
+   * But the same structure can extend to:
+
+     * richer sandboxes,
+     * real agents,
+     * partially observed systems.
 
 ---
 
-# 9. 🧩 READY TO BUILD IN A FEW HOURS
+## 11. Implementation Plan (Concrete & Realistic)
 
-### Build order:
+**Hour 1 – Sandbox**
 
-1. Sandbox (60 min)
-2. Dataset generator (40 min)
-3. JSONL → LM text conversion (10 min)
-4. Train tiny LM (20–30 min)
-5. Rollout predictor (40 min)
-6. Intervention engine (30 min)
-7. Streamlit demo (45 min)
+* Implement `EnvState`, `SandboxEnv`, and ~8 actions.
+* Ensure flags update correctly.
 
-Total: **~5 hours**.
+**Hour 2 – Dataset (Spectrum)**
 
-This is the **final coherent plan**, fully generative, no RL, no classifiers.
+* Define 2–3 safe templates + 1–2 harmful templates.
+* Implement mutation functions:
+
+  * synonyms, extra safe steps, small state variations.
+* Generate ~2–5k episodes to `trajectories.jsonl`.
+
+**Hour 3 – Dataset (Signal)**
+
+* Implement consistency checker:
+
+  * invalid paths → drop,
+  * flag/action mismatch → drop.
+* Flatten JSON → `train.txt` / `val.txt`.
+
+**Hour 4 – Train GWM-Lite**
+
+* Use HF `GPT2LMHeadModel` with small config.
+* Train 2–3 epochs on `train.txt`, monitor train loss.
+
+**Hour 5 – HRM + TRM Logic & Inference**
+
+* Add latent refinement function:
+
+  * simple MLP/GRU on pooled hidden states.
+* Implement recursive rollout over horizon H.
+* Implement harmful motif detection.
+
+**Hour 6 – Demo**
+
+* Simple CLI / Streamlit:
+
+  * Input: choose scenario (safe / insider).
+  * Show:
+
+    * real steps,
+    * predicted futures (with highlights),
+    * intervention decisions.
 
 ---
 
