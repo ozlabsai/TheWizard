@@ -140,6 +140,9 @@ class LocalLLMGenerator:
                 model=self.model_name,
                 trust_remote_code=True,
                 dtype="auto",
+                max_model_len=2048,  # Limit context to save memory
+                gpu_memory_utilization=0.5,  # Use only 50% of GPU memory
+                max_num_seqs=32,  # Limit concurrent sequences
             )
             self._sampling_params = SamplingParams(
                 temperature=0.7,
