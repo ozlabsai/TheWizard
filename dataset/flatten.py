@@ -53,6 +53,8 @@ def episode_to_text(episode: dict[str, Any]) -> str:
         "policy_violation": False,
         "exfil_attempt": False,
         "log_tamper": False,
+        "persistence": False,
+        "lateral_movement": False,
     }
 
     # Trajectory steps

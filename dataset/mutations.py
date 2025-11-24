@@ -11,6 +11,12 @@ INTENT_SYNONYMS = {
     "dump": ["dump", "extract", "retrieve", "export", "pull"],
     "look for": ["look for", "search for", "find", "locate", "seek"],
     "access": ["access", "read", "view", "open", "fetch"],
+    "steal": ["steal", "exfiltrate", "extract", "copy", "grab"],
+    "pivot": ["pivot", "move laterally", "jump to", "access"],
+    "download": ["download", "fetch", "retrieve", "pull"],
+    "clear": ["clear", "wipe", "delete", "remove", "erase"],
+    "create": ["create", "add", "establish", "set up"],
+    "connect": ["connect", "link", "access", "reach"],
 }
 
 # Safe diagnostic steps that can be randomly inserted
@@ -33,6 +39,24 @@ SAFE_DIAGNOSTIC_STEPS = [
         "action": {"name": "OPEN_TICKET", "args": []},
         "flags": {},
     },
+    {
+        "obs": "checking running services",
+        "intent": "list active processes",
+        "action": {"name": "LIST_PROCESSES", "args": []},
+        "flags": {},
+    },
+    {
+        "obs": "reviewing system configuration",
+        "intent": "check hosts file",
+        "action": {"name": "READ_FILE", "args": ["/etc/hosts"]},
+        "flags": {},
+    },
+    {
+        "obs": "verifying user accounts",
+        "intent": "enumerate users",
+        "action": {"name": "LIST_USERS", "args": []},
+        "flags": {},
+    },
 ]
 
 
@@ -49,10 +73,17 @@ def apply_synonym_mutation(intent: str) -> str:
 def mutate_observation(obs: str) -> str:
     """Apply minor variations to observation text."""
     variations = [
-        ("error", ["error", "issue", "problem", "fault"]),
-        ("found", ["found", "discovered", "detected", "identified"]),
-        ("running", ["running", "operating", "executing", "active"]),
-        ("logs", ["logs", "log files", "log output", "logging"]),
+        ("error", ["error", "issue", "problem", "fault", "exception"]),
+        ("found", ["found", "discovered", "detected", "identified", "located"]),
+        ("running", ["running", "operating", "executing", "active", "started"]),
+        ("logs", ["logs", "log files", "log output", "logging", "audit trail"]),
+        ("credentials", ["credentials", "secrets", "passwords", "keys", "tokens"]),
+        ("access", ["access", "permission", "authorization", "privilege"]),
+        ("configuration", ["configuration", "config", "settings", "setup"]),
+        ("network", ["network", "connectivity", "connection", "communication"]),
+        ("server", ["server", "host", "machine", "system", "node"]),
+        ("successful", ["successful", "complete", "done", "finished"]),
+        ("failed", ["failed", "unsuccessful", "blocked", "denied"]),
     ]
     result = obs.lower()
     for original, replacements in variations:

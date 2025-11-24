@@ -1,10 +1,31 @@
 [project]
 name = "wizard"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generative world model for cyber defense - predicts and blocks harmful AI agent trajectories"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
     "torch>=2.0.0",
-    "transformers>=4.30.0",
+    "transformers>=4.40.0",
+    "peft>=0.10.0",
+    "accelerate>=0.27.0",
+    "datasets>=2.18.0",
+    "tqdm>=4.66.0",
     "pytest>=7.0.0",
 ]
+
+# bitsandbytes is optional (for 8-bit/4-bit quantization on Linux/Windows)
+# Install separately if needed: pip install bitsandbytes
+
+[project.optional-dependencies]
+dev = [
+    "wandb>=0.16.0",
+    "tensorboard>=2.15.0",
+]
+# Fast LLM inference for dataset generation (GPU recommended)
+inference = [
+    "vllm>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

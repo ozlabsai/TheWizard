@@ -1,10 +1,10 @@
 """WizardEngine main class for runtime prediction and intervention."""
 
+import os
 import time
 from typing import Any
 
 import torch
-from transformers import GPT2LMHeadModel, AutoTokenizer
 
 from sandbox.env import SandboxEnv
 from engine.detector import (
@@ -18,26 +18,59 @@ from engine.predictor import TrajectoryPredictor, build_context_text
 
 
 class WizardEngine:
-    """Main defense engine that predicts and blocks harmful trajectories."""
+    """Main defense engine that predicts and blocks harmful trajectories.
 
-    def __init__(self, model_path: str):
+    Supports both legacy GPT-2 checkpoints and new Qwen3/LoRA models.
+    """
+
+    def __init__(self, model_path: str = None):
         """Initialize the Wizard defense engine with a trained model.
 
         Args:
-            model_path: Path to directory containing model checkpoint and tokenizer
+            model_path: Path to directory containing model checkpoint.
+                       If None, uses default paths (tries LoRA first, then full model)
         """
+        # Determine model path
+        if model_path is None:
+            model_path = self._find_model_path()
+
         print(f"Loading model from {model_path}...")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.model = GPT2LMHeadModel.from_pretrained(model_path)
+        # Use the unified load_model function that handles both formats
+        from model.train import load_model
+        self.model, self.tokenizer = load_model(model_path)
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
-        self.model.training = False  # Inference mode
+        # Get device
+        if hasattr(self.model, "hf_device_map"):
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = next(self.model.parameters()).device
 
+        # Ensure inference mode
+        self.model.train(False)
+
+        # Create predictor
         self.predictor = TrajectoryPredictor(self.model, self.tokenizer)
 
+        num_params = sum(p.numel() for p in self.model.parameters())
         print(f"WizardEngine initialized on {self.device}")
+        print(f"Model parameters: {num_params:,} ({num_params/1e6:.1f}M)")
+
+    def _find_model_path(self) -> str:
+        """Find the best available model checkpoint."""
+        paths_to_try = [
+            "model/checkpoints-lora",  # LoRA fine-tuned (preferred)
+            "model/checkpoints",       # Full model
+        ]
+
+        for path in paths_to_try:
+            if os.path.exists(path) and os.listdir(path):
+                return path
+
+        raise FileNotFoundError(
+            "No model checkpoint found. Please train a model first:\n"
+            "  uv run python -m model.train"
+        )
 
     def predict_future(self, context_text: str, max_new_tokens: int = 128) -> str:
         """Generates a future trajectory continuation from context.
@@ -87,12 +120,12 @@ class WizardEngine:
         """
         return is_harmful_future(future_text)
 
-    def evaluate_risk(
+    def assess_risk(
         self,
         context_text: str,
         n_samples: int = 10,
     ) -> tuple[bool, list[str], list[str]]:
-        """Evaluates risk by sampling multiple futures.
+        """Assesses risk by sampling multiple futures.
 
         Args:
             context_text: Current trajectory in text format
@@ -116,10 +149,15 @@ class WizardEngine:
         is_risky = len(harmful_futures) > 0
 
         elapsed = time.time() - start_time
-        print(f"Risk evaluation: {len(harmful_futures)}/{len(futures)} harmful "
+        print(f"Risk assessment: {len(harmful_futures)}/{len(futures)} harmful "
               f"({elapsed:.2f}s)")
 
         return is_risky, harmful_futures, futures
+
+    # Alias for backwards compatibility
+    def evaluate_risk(self, context_text: str, n_samples: int = 10):
+        """Alias for assess_risk (backwards compatibility)."""
+        return self.assess_risk(context_text, n_samples)
 
     def run_controlled_episode(
         self,
@@ -163,8 +201,8 @@ class WizardEngine:
                 history_steps=history + [step],
             )
 
-            # Evaluate risk
-            is_risky, harmful_futures, all_futures = self.evaluate_risk(
+            # Assess risk
+            is_risky, harmful_futures, all_futures = self.assess_risk(
                 context,
                 n_samples=n_samples,
             )
@@ -217,11 +255,8 @@ class WizardEngine:
 
 def create_test_engine() -> WizardEngine | None:
     """Create a WizardEngine for testing (returns None if no checkpoint)."""
-    import os
-    model_path = "model/checkpoints"
-
-    if not os.path.exists(model_path):
-        print(f"No model checkpoint found at {model_path}")
+    try:
+        return WizardEngine()
+    except FileNotFoundError as e:
+        print(str(e))
         return None
-
-    return WizardEngine(model_path)
