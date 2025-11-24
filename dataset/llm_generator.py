@@ -384,10 +384,23 @@ def generate_llm_dataset(
     Returns:
         Statistics dictionary
     """
+    import time
+
     llm = LocalLLMGenerator(model_name) if use_llm else None
 
-    stats = {"total": 0, "chains": {}, "llm_used": use_llm}
+    stats = {
+        "total": 0,
+        "chains": {},
+        "llm_used": use_llm,
+        "llm_successes": 0,
+        "llm_fallbacks": 0,
+        "backend": None,
+        "elapsed_seconds": 0,
+    }
     chain_names = list(ATTACK_CHAINS.keys())
+
+    start_time = time.time()
+    last_log_time = start_time
 
     with open(output_path, "w") as f:
         for i in range(n):
@@ -396,6 +409,9 @@ def generate_llm_dataset(
 
             if use_llm and llm:
                 episode = generate_llm_trajectory(llm, chain_name, episode_id, use_llm=True)
+                # Track backend on first successful load
+                if stats["backend"] is None and llm._backend_used:
+                    stats["backend"] = llm._backend_used
             else:
                 # Fallback to basic composition
                 from dataset.composer import compose_trajectory
@@ -406,8 +422,29 @@ def generate_llm_dataset(
             stats["total"] += 1
             stats["chains"][chain_name] = stats["chains"].get(chain_name, 0) + 1
 
-            if (i + 1) % 100 == 0:
-                print(f"  Generated {i + 1}/{n} episodes...")
+            # Progress logging with rate info
+            current_time = time.time()
+            if (i + 1) % 100 == 0 or (current_time - last_log_time) > 10:
+                elapsed = current_time - start_time
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                eta = (n - i - 1) / rate if rate > 0 else 0
+
+                backend_info = f"[{stats['backend']}]" if stats['backend'] else "[templates]"
+                print(
+                    f"  {backend_info} {i + 1:,}/{n:,} episodes "
+                    f"({rate:.1f}/sec, ETA: {eta:.0f}s)"
+                )
+                last_log_time = current_time
+
+    stats["elapsed_seconds"] = round(time.time() - start_time, 1)
+
+    # Final summary
+    if stats["total"] > 0:
+        final_rate = stats["total"] / stats["elapsed_seconds"] if stats["elapsed_seconds"] > 0 else 0
+        print(
+            f"  Completed: {stats['total']:,} episodes in {stats['elapsed_seconds']:.1f}s "
+            f"({final_rate:.1f}/sec)"
+        )
 
     return stats
 
