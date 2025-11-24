@@ -50,6 +50,7 @@ def generate_full_dataset(
     llm_ratio: float = 0.2,
     use_llm: bool = False,
     verbose: bool = True,
+    resume: bool = True,
 ) -> dict:
     """Generate a full dataset combining all generation approaches.
 
@@ -61,6 +62,7 @@ def generate_full_dataset(
         llm_ratio: Fraction from LLM-enhanced (default 0.2)
         use_llm: Whether to use actual LLM or template fallback
         verbose: Print progress information
+        resume: Resume from existing checkpoints (default True)
 
     Returns:
         Statistics dictionary
@@ -115,7 +117,7 @@ def generate_full_dataset(
         if verbose:
             print(f"\n3. Generating LLM-enhanced trajectories (use_llm={use_llm})...")
         temp_llm = str(output_dir / "_temp_llm.jsonl")
-        llm_stats = generate_llm_dataset(llm_count, temp_llm, use_llm=use_llm)
+        llm_stats = generate_llm_dataset(llm_count, temp_llm, use_llm=use_llm, resume=resume)
         temp_files.append(temp_llm)
         if verbose:
             print(f"   Generated: {llm_stats}")
@@ -160,6 +162,7 @@ def generate_and_convert(
     use_llm: bool = False,
     val_ratio: float = 0.1,
     verbose: bool = True,
+    resume: bool = True,
 ) -> dict:
     """Generate dataset and convert to text corpus for training.
 
@@ -172,6 +175,7 @@ def generate_and_convert(
         use_llm: Use actual LLM for generation
         val_ratio: Fraction for validation (default 0.1)
         verbose: Print progress
+        resume: Resume from existing checkpoints (default True)
 
     Returns:
         Full statistics
@@ -191,6 +195,7 @@ def generate_and_convert(
         llm_ratio=llm_ratio,
         use_llm=use_llm,
         verbose=verbose,
+        resume=resume,
     )
 
     # Convert to corpus
@@ -247,6 +252,10 @@ def main():
         "--quiet", action="store_true",
         help="Suppress progress output"
     )
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="Start fresh, ignore existing checkpoints"
+    )
 
     args = parser.parse_args()
 
@@ -259,6 +268,7 @@ def main():
         use_llm=args.use_llm,
         val_ratio=args.val_ratio,
         verbose=not args.quiet,
+        resume=not args.fresh,
     )
 
     print(f"\nFinal stats: {json.dumps(stats, indent=2)}")

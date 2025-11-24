@@ -133,7 +133,12 @@ class LocalLLMGenerator:
     def _try_load_vllm(self) -> bool:
         """Try to load model with vLLM for fast inference."""
         try:
+            import os
             from vllm import LLM, SamplingParams
+
+            # Suppress vLLM's verbose progress bars and logging
+            os.environ["VLLM_LOGGING_LEVEL"] = "WARNING"
+            os.environ["VLLM_NO_USAGE_STATS"] = "1"
 
             print(f"Loading LLM with vLLM: {self.model_name}")
             self.model = LLM(
@@ -143,6 +148,7 @@ class LocalLLMGenerator:
                 max_model_len=2048,  # Limit context to save memory
                 gpu_memory_utilization=0.5,  # Use only 50% of GPU memory
                 max_num_seqs=32,  # Limit concurrent sequences
+                disable_log_stats=True,  # Disable statistics logging
             )
             self._sampling_params = SamplingParams(
                 temperature=0.7,
@@ -207,7 +213,7 @@ class LocalLLMGenerator:
         from vllm import SamplingParams
 
         params = SamplingParams(temperature=0.7, max_tokens=max_tokens)
-        outputs = self.model.generate([prompt], params)
+        outputs = self.model.generate([prompt], params, use_tqdm=False)
         return outputs[0].outputs[0].text.strip()
 
     def _generate_transformers(self, prompt: str, max_tokens: int) -> str:
@@ -238,7 +244,7 @@ class LocalLLMGenerator:
             # vLLM supports efficient batching
             from vllm import SamplingParams
             params = SamplingParams(temperature=0.7, max_tokens=max_tokens)
-            outputs = self.model.generate(prompts, params)
+            outputs = self.model.generate(prompts, params, use_tqdm=False)
             return [o.outputs[0].text.strip() for o in outputs]
         else:
             # Transformers: fall back to sequential
@@ -372,14 +378,16 @@ def generate_llm_dataset(
     output_path: str,
     use_llm: bool = True,
     model_name: str = "Qwen/Qwen3-0.6B",
+    resume: bool = True,
 ) -> dict[str, int]:
-    """Generate n LLM-enhanced trajectories.
+    """Generate n LLM-enhanced trajectories with checkpoint/resume support.
 
     Args:
         n: Number of episodes to generate
         output_path: Path for output JSONL file
         use_llm: Whether to actually use LLM (False = use templates only)
         model_name: HuggingFace model name
+        resume: If True, resume from existing file; if False, start fresh
 
     Returns:
         Statistics dictionary
@@ -396,14 +404,37 @@ def generate_llm_dataset(
         "llm_fallbacks": 0,
         "backend": None,
         "elapsed_seconds": 0,
+        "resumed_from": 0,
     }
     chain_names = list(ATTACK_CHAINS.keys())
+
+    # Check for existing progress
+    start_idx = 0
+    output_file = Path(output_path)
+
+    if resume and output_file.exists():
+        # Count existing episodes
+        with open(output_path, "r") as f:
+            start_idx = sum(1 for _ in f)
+
+        if start_idx >= n:
+            print(f"  Already completed {start_idx:,}/{n:,} episodes, nothing to do")
+            stats["total"] = start_idx
+            stats["resumed_from"] = start_idx
+            return stats
+
+        if start_idx > 0:
+            print(f"  Resuming from checkpoint: {start_idx:,}/{n:,} episodes already generated")
+            stats["resumed_from"] = start_idx
 
     start_time = time.time()
     last_log_time = start_time
 
-    with open(output_path, "w") as f:
-        for i in range(n):
+    # Open in append mode if resuming, write mode otherwise
+    mode = "a" if (resume and start_idx > 0) else "w"
+
+    with open(output_path, mode) as f:
+        for i in range(start_idx, n):
             chain_name = random.choice(chain_names)
             episode_id = f"llm_{chain_name}_{i:05d}"
 
@@ -418,16 +449,19 @@ def generate_llm_dataset(
                 episode = compose_trajectory(chain_name, episode_id)
 
             f.write(json.dumps(episode) + "\n")
+            f.flush()  # Flush after each write for crash safety
 
             stats["total"] += 1
             stats["chains"][chain_name] = stats["chains"].get(chain_name, 0) + 1
 
             # Progress logging with rate info
             current_time = time.time()
-            if (i + 1) % 100 == 0 or (current_time - last_log_time) > 10:
+            episodes_this_run = i - start_idx + 1
+            if episodes_this_run % 100 == 0 or (current_time - last_log_time) > 10:
                 elapsed = current_time - start_time
-                rate = (i + 1) / elapsed if elapsed > 0 else 0
-                eta = (n - i - 1) / rate if rate > 0 else 0
+                rate = episodes_this_run / elapsed if elapsed > 0 else 0
+                remaining = n - i - 1
+                eta = remaining / rate if rate > 0 else 0
 
                 backend_info = f"[{stats['backend']}]" if stats['backend'] else "[templates]"
                 print(
@@ -437,14 +471,18 @@ def generate_llm_dataset(
                 last_log_time = current_time
 
     stats["elapsed_seconds"] = round(time.time() - start_time, 1)
+    stats["total"] += start_idx  # Include previously generated episodes
 
     # Final summary
-    if stats["total"] > 0:
-        final_rate = stats["total"] / stats["elapsed_seconds"] if stats["elapsed_seconds"] > 0 else 0
+    new_episodes = stats["total"] - stats["resumed_from"]
+    if new_episodes > 0:
+        final_rate = new_episodes / stats["elapsed_seconds"] if stats["elapsed_seconds"] > 0 else 0
         print(
-            f"  Completed: {stats['total']:,} episodes in {stats['elapsed_seconds']:.1f}s "
-            f"({final_rate:.1f}/sec)"
+            f"  Completed: {new_episodes:,} new episodes in {stats['elapsed_seconds']:.1f}s "
+            f"({final_rate:.1f}/sec), total: {stats['total']:,}"
         )
+    else:
+        print(f"  No new episodes generated (already at {stats['total']:,})")
 
     return stats
 
@@ -540,6 +578,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, default="data/llm_trajectories.jsonl")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM, use templates")
     parser.add_argument("--model", type=str, default="Qwen/Qwen3-0.6B")
+    parser.add_argument("--fresh", action="store_true", help="Start fresh, ignore existing checkpoint")
 
     args = parser.parse_args()
 
@@ -549,5 +588,6 @@ if __name__ == "__main__":
         args.output,
         use_llm=not args.no_llm,
         model_name=args.model,
+        resume=not args.fresh,
     )
     print(f"\nGenerated: {stats}")
