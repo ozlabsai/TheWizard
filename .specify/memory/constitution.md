@@ -2,18 +2,19 @@
 ================================================================================
 SYNC IMPACT REPORT
 ================================================================================
-Version change: N/A → 1.0.0 (Initial ratification)
-Modified principles: N/A (new constitution)
-Added sections:
-  - Core Principles (5 principles)
-  - Development Workflow
-  - Hackathon Constraints
-  - Governance
-Removed sections: N/A
+Version change: 1.0.0 → 1.1.0 (Model flexibility update)
+Modified principles: None renamed
+Added sections: None
+Removed sections: None
+Modified sections:
+  - Hackathon Constraints: Updated model size to reflect LoRA fine-tuning approach
+    (was: 10-20M parameters, now: flexible with LoRA adapters)
 Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ No updates needed (Constitution Check section compatible)
   - .specify/templates/spec-template.md: ✅ No updates needed (requirements format compatible)
   - .specify/templates/tasks-template.md: ✅ No updates needed (phase structure compatible)
+  - .specify/templates/checklist-template.md: ✅ No updates needed
+  - .specify/templates/agent-file-template.md: ✅ No updates needed
 Follow-up TODOs: None
 ================================================================================
 -->
@@ -101,10 +102,12 @@ These constraints reflect the hackathon context and MUST be respected:
 
 | Constraint | Limit | Enforcement |
 |------------|-------|-------------|
-| Model size | 10-20M parameters | Config in training script |
+| Model approach | LoRA fine-tuning of pretrained models OR scratch GPT-2 | Config in model/config.py (BASE_MODEL) |
 | Training time | <1 hour on single GPU/CPU | Monitor and abort if exceeded |
-| Inference latency | Sub-second per prediction | Profile before demo |
+| Inference latency | Sub-second per prediction (GPU), ~3s acceptable (CPU) | Profile before demo |
 | Dataset size | 2-5k episodes | Generator output cap |
+
+**Note**: The project supports both approaches: (1) LoRA fine-tuning of larger pretrained models (e.g., Qwen3-0.6B) for better reasoning, or (2) training a small GPT-2 from scratch (~16M params) for minimal dependencies. Select via `BASE_MODEL` in config.
 
 ## Governance
 
@@ -124,4 +127,4 @@ These constraints reflect the hackathon context and MUST be respected:
 - Pipeline changes MUST preserve traceability (Principle IV)
 - Complexity MUST be justified if it exceeds hackathon constraints
 
-**Version**: 1.0.0 | **Ratified**: 2025-11-23 | **Last Amended**: 2025-11-23
+**Version**: 1.1.0 | **Ratified**: 2025-11-23 | **Last Amended**: 2025-11-30
